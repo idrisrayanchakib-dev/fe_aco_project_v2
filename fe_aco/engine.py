@@ -3,72 +3,70 @@ import torch.nn.functional as F
 
 class AugmentedQueenAntColony:
     def __init__(self, adj_matrix, feature_matrix, num_communities, device='cuda', 
-                 aug_weight=0.5, top_k=10):  # <--- REGLAGE EQULIBRÉ (Gold Standard)
+                 aug_weight=0.5, top_k=10):
         """
-        FE-ACO ULTIMATE ENGINE (Big Data Ready)
-        Intègre : Safety Bypass pour 100M nodes + Recuit Quadratique.
+        FE-ACO ULTIMATE ENGINE (Big Data Safe)
         """
         self.device = device
         self.k = num_communities
         self.num_nodes = adj_matrix.shape[0]
         
-        # --- SÉCURITÉ BIG DATA (Le Fix Anti-Crash) ---
-        # Si > 50k nœuds, le calcul N*N de similarité est impossible en RAM.
-        # On passe en mode "Graphe Brut" optimisé.
+        # --- 1. SÉCURITÉ BIG DATA (Le 'Bypass' doit être EN PREMIER) ---
         
         if self.num_nodes > 50000:
-            print(f"⚠️ Mode Big Data ({self.num_nodes:,} nœuds) : Augmentation Dense désactivée.")
+            print(f"⚠️ Mode Big Data ({self.num_nodes:,} nœuds) : Optimisations activées.")
             
-            # On utilise le graphe d'entrée tel quel (supposé déjà optimisé/sparse)
+            # Dans ce mode, on ne peut pas calculer la similarité N*N.
+            # On utilise le graphe brut (Sparse) fourni en entrée.
             self.norm_fused_adj = adj_matrix
             
-            # On s'assure qu'il est bien Sparse
+            # On s'assure qu'il est Sparse et Coalesced (Vital pour éviter le crash 9M GiB)
             if not self.norm_fused_adj.is_sparse:
                 self.norm_fused_adj = self.norm_fused_adj.to_sparse()
+            
+            # 'coalesce' range la mémoire pour que le GPU ne plante pas
+            self.norm_fused_adj = self.norm_fused_adj.coalesce()
                 
             self.is_sparse = True
             
         else:
-            # --- MODE STANDARD (Cora / Recherche) ---
-            # On fait l'augmentation sémantique complète (Ta recette magique)
+            # --- MODE STANDARD (Cora / <50k) ---
+            # Seulement ici on fait les calculs lourds Sémantiques
             
-            # 1. Normalisation & Similarité
+            # A. Graph Augmentation
             feat_norm = F.normalize(feature_matrix, p=2, dim=1)
             sim_matrix = torch.mm(feat_norm, feat_norm.t())
             
-            # 2. Sparsification
             values, indices = torch.topk(sim_matrix, k=top_k, dim=1)
             sparse_sim = torch.zeros_like(sim_matrix)
             sparse_sim.scatter_(1, indices, values)
             
-            # 3. Attention Dynamique
+            # B. Attention Dynamique
             degrees = adj_matrix.sum(dim=1).view(-1, 1)
             dynamic_weight = aug_weight + (2.0 / (degrees + 1.0))
-            
             weighted_semantics = dynamic_weight * sparse_sim
             
-            # 4. Fusion
+            # C. Fusion
             self.fused_adj = adj_matrix + weighted_semantics
             self.fused_adj = self.fused_adj + torch.eye(self.num_nodes, device=device)
             
-            # 5. Normalisation
+            # D. Normalisation
             deg = self.fused_adj.sum(dim=1).clamp(min=1.0)
             norm_fused_adj = deg.pow(-1).view(-1, 1) * self.fused_adj
             
             self.norm_fused_adj = norm_fused_adj
             self.is_sparse = False
 
-        # Initialisation des Reines
+        # --- 2. INITIALISATION DES REINES ---
         self._reset_queens()
             
     def _reset_queens(self):
-        """Plante des reines aléatoires (Optimisé mémoire)."""
-        # Utilise le type de données correct (float32 ou bfloat16 selon le graphe)
+        # Utilisation du type correct pour économiser la mémoire
         dtype = self.norm_fused_adj.dtype if self.norm_fused_adj.is_sparse else torch.float32
         
         self.global_pheromone = torch.ones(self.num_nodes, self.k, device=self.device, dtype=dtype) / self.k
         
-        # Génération indices sur CPU pour éviter OOM sur les très gros tenseurs d'indices
+        # Génération sur CPU pour éviter les pics VRAM sur 50M
         perm = torch.randperm(self.num_nodes, device='cpu')[:self.k].to(self.device)
         
         for i, node_idx in enumerate(perm):
@@ -77,17 +75,14 @@ class AugmentedQueenAntColony:
 
     def step(self, current_round=0, total_rounds=80):
         """
-        Une itération avec RECUIT QUADRATIQUE (Inflation & Évaporation adaptives).
+        Une itération avec RECUIT QUADRATIQUE & Epsilon Safety.
         """
         progress = current_round / total_rounds
         
-        # Inflation : 1.2 -> 3.7
         inflation = 1.2 + (pow(progress, 2) * 2.5)
-        
-        # Évaporation : 0.1 -> 0.9
         evaporation = 0.1 + (progress * 0.8) 
         
-        # Propagation (Compatible Sparse & Dense)
+        # Propagation
         if self.is_sparse:
             neighbor_influence = torch.sparse.mm(self.norm_fused_adj, self.global_pheromone)
         else:
@@ -99,15 +94,10 @@ class AugmentedQueenAntColony:
         prune_thresh = 0.01 + (progress * 0.05)
         probabilities[probabilities < prune_thresh] = 0.0
         
-        # --- CORRECTION DU BUG (NORMALISATION) ---
+        # Normalisation Safe (Epsilon)
         row_sums = probabilities.sum(dim=1, keepdim=True)
-        
-        # Astuce "Epsilon" : On ajoute 1e-16 pour éviter la division par zéro.
-        # Plus besoin de masques complexes qui font crasher la RAM.
-        # Si somme=0, alors proba=0, donc 0 / 0.000...01 = 0. C'est parfait.
         probabilities = probabilities / (row_sums + 1e-16)
         
-        # Mise à jour
         self.global_pheromone = (1 - evaporation) * self.global_pheromone + evaporation * probabilities
         
     def get_prediction(self):
