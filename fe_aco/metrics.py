@@ -1,39 +1,17 @@
 import torch
 import torch.nn.functional as F
-import numpy as np
 
-def calculate_modularity(adj, pred_labels, num_communities, sample_size=50000):
+def calculate_modularity(adj, pred_labels, num_communities):
     """
-    Calcule la Modularité (Q).
-    - Si Petit Graphe : Calcul Exact.
-    - Si Grand Graphe : Estimation par Sondage (Sampling).
+    Calcule la Modularité (Q) sur le GPU.
+    Utilisé pour la sélection sans vérité terrain.
     """
-    num_nodes = adj.shape[0]
-    
-    # --- CAS 1 : BIG DATA (Sampling) ---
-    if num_nodes > sample_size:
-        # On ne peut pas tout calculer. On prend un échantillon représentatif.
-        # On choisit 'sample_size' nœuds au hasard
-        indices = torch.randperm(num_nodes)[:sample_size].to(adj.device)
-        
-        # On extrait les labels de cet échantillon
-        sample_preds = pred_labels[indices]
-        
-        # On extrait le sous-graphe (Attention: opération délicate en Sparse)
-        # Pour faire simple et rapide sur GPU H100 :
-        # On triche un peu : on ne calcule Q que si on peut extraire le sous-graphe dense
-        # Sinon, on retourne une estimation neutre (0.0) pour ne pas bloquer.
-        
-        # Note : Extraire un sous-graphe dense d'une matrice sparse géante est coûteux.
-        # Pour ce projet, on va se baser sur la COHÉRENCE (C) qui est plus facile à sampler.
-        return 0.0 # On skip Q pour le Big Data, on se fie à C.
-
-    # --- CAS 2 : STANDARD (Exact) ---
     m = adj.sum()
     if m == 0: return 0.0
     
+    # Gestion Sparse/Dense pour le calcul
     if adj.is_sparse:
-        adj = adj.to_dense()
+        adj = adj.to_dense() # Pour <50k nœuds ça passe en mémoire
 
     k = adj.sum(dim=1).view(-1, 1)
     clusters = F.one_hot(pred_labels, num_classes=num_communities).float()
@@ -45,50 +23,37 @@ def calculate_modularity(adj, pred_labels, num_communities, sample_size=50000):
     Q = torch.trace(q_matrix) / m
     return Q.item()
 
-def calculate_semantic_coherence(feature_matrix, pred_labels, num_communities, sample_size=100000):
+def calculate_semantic_coherence(feature_matrix, pred_labels, num_communities):
     """
-    Calcule la Cohérence Sémantique (C).
-    Supporte le Sampling pour le Big Data (Calcul sur 100k nœuds max).
+    Calcule à quel point les clusters sont 'purs' sémantiquement.
+    On calcule la similarité moyenne au centre du cluster.
     """
-    num_nodes = feature_matrix.shape[0]
+    total_coherence = 0.0
     
-    # Si trop gros, on travaille sur un échantillon
-    if num_nodes > sample_size:
-        indices = torch.randperm(num_nodes)[:sample_size].to(feature_matrix.device)
-        features_subset = feature_matrix[indices]
-        preds_subset = pred_labels[indices]
-    else:
-        features_subset = feature_matrix
-        preds_subset = pred_labels
+    # Pour chaque communauté
+    for c in range(num_communities):
+        # Trouver les nœuds qui appartiennent à ce cluster
+        mask = (pred_labels == c)
         
-    try:
-        total_coherence = 0.0
-        valid_communities = 0
+        # S'il n'y a personne ou un seul nœud, on ignore
+        if mask.sum() <= 1: 
+            continue
+            
+        # Récupérer les features de ce cluster
+        cluster_feats = feature_matrix[mask]
         
-        for c in range(num_communities):
-            mask = (preds_subset == c)
-            # On ignore les petits clusters vides dans l'échantillon
-            if mask.sum() <= 5: 
-                continue
-                
-            cluster_feats = features_subset[mask]
-            
-            # Centroïde
-            centroid = cluster_feats.mean(dim=0, keepdim=True)
-            centroid = F.normalize(centroid, p=2, dim=1)
-            
-            # Normalisation
-            cluster_feats = F.normalize(cluster_feats, p=2, dim=1)
-            
-            # Similarité (Rapide sur l'échantillon)
-            sims = torch.mm(cluster_feats, centroid.t())
-            total_coherence += sims.mean().item()
-            valid_communities += 1
-            
-        if valid_communities == 0:
-            return 0.0
-            
-        return total_coherence / valid_communities
+        # Calculer le "Centre" (Centroïde) du cluster
+        centroid = cluster_feats.mean(dim=0, keepdim=True)
+        centroid = F.normalize(centroid, p=2, dim=1)
         
-    except RuntimeError:
-        return 0.0
+        # Normaliser les membres
+        cluster_feats = F.normalize(cluster_feats, p=2, dim=1)
+        
+        # Calculer la similarité de chaque membre avec le centre
+        sims = torch.mm(cluster_feats, centroid.t())
+        
+        # La cohérence est la moyenne des similarités
+        total_coherence += sims.mean().item()
+        
+    # On fait la moyenne sur tous les clusters
+    return total_coherence / num_communities
