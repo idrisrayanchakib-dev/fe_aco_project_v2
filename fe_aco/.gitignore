@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / Installation
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environnements virtuels
+.venv/
+env/
+venv/
+
+# IDE (VS Code)
+.vscode/
+.idea/
+
+# Données (Très important : on ne push pas les gros datasets)
+data/
+/tmp/
+
+# Fichiers de test locaux
+*.png
