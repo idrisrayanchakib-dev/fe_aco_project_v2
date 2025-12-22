@@ -77,7 +77,7 @@ class AugmentedQueenAntColony:
 
     def step(self, current_round=0, total_rounds=80):
         """
-        Recuit Quadratique.
+        Une itération avec RECUIT QUADRATIQUE (Inflation & Évaporation adaptives).
         """
         progress = current_round / total_rounds
         
@@ -99,13 +99,15 @@ class AugmentedQueenAntColony:
         prune_thresh = 0.01 + (progress * 0.05)
         probabilities[probabilities < prune_thresh] = 0.0
         
-        # Normalisation Safe
+        # --- CORRECTION DU BUG (NORMALISATION) ---
         row_sums = probabilities.sum(dim=1, keepdim=True)
-        # Masque pour éviter division par zéro sans créer de NaN
-        mask = row_sums > 1e-9
-        # On ne met à jour que là où il y a de la somme, le reste reste à 0
-        probabilities[mask] = probabilities[mask] / row_sums[mask]
         
+        # Astuce "Epsilon" : On ajoute 1e-16 pour éviter la division par zéro.
+        # Plus besoin de masques complexes qui font crasher la RAM.
+        # Si somme=0, alors proba=0, donc 0 / 0.000...01 = 0. C'est parfait.
+        probabilities = probabilities / (row_sums + 1e-16)
+        
+        # Mise à jour
         self.global_pheromone = (1 - evaporation) * self.global_pheromone + evaporation * probabilities
         
     def get_prediction(self):
