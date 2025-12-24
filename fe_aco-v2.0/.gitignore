@@ -1,0 +1,32 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environnements virtuels
+venv/
+env/
+.env
+
+# IDE settings
+.vscode/
+.idea/
+.ipynb_checkpoints/
+
+# Fichiers de build & distribution
+build/
+dist/
+*.egg-info/
+
+# Fichiers générés par le pipeline SMART ADN (on ne veut pas versionner les tests)
+*.png
+smart_adn_*.png
+*.log
+
+# Données (ne jamais uploader de data sur Github !)
+data/
+datasets/
+*.csv
+*.pt
+*.pth

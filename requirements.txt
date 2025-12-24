@@ -1,9 +1,16 @@
-torch>=2.0.0
-torch-geometric>=2.3.0
-numpy>=1.21.0
-scikit-learn>=1.0.0
-scipy>=1.7.0
-matplotlib>=3.5.0
-networkx>=2.6.0
-pandas>=1.3.0
-tqdm>=4.60.0
+# --- Core Deep Learning (Optimisé H100) ---
+torch>=2.2.0           # Requis pour le support stable des H100 et Flash Attention
+torch-geometric>=2.5.0 # Indispensable pour la simulation biomédicale et les GNN
+
+# --- Scientific Stack ---
+numpy>=1.24.0          # Gestion mémoire optimisée
+scikit-learn>=1.3.0    # Métriques et utilitaires
+scipy>=1.10.0          # Calculs sparse avancés
+
+# --- Visualization & Reporting ---
+matplotlib>=3.8.0      # Pour des plots plus propres
+networkx>=3.1          # CRITIQUE : Ton visualization.py a besoin des features de la v3+
+pandas>=2.0.0          # Manipulation des DataFrames (Rapports CSV/JSON)
+
+# --- Utilities ---
+tqdm>=4.66.0           # Barres de progression pour tes boucles 'trials'
