@@ -60,7 +60,7 @@ download
 content_copy
 expand_less
 # 1. Clone the repository
-git clone https://github.com/smart-adn/fe-aco-engine.git
+git clone https://github.com/idrisrayanchakib-dev/fe_aco_project_v2.git
 cd fe_aco
 
 # 2. Install in editable mode (Optimized dependencies)
