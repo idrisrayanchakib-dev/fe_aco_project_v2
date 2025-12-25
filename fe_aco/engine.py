@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 class AugmentedQueenAntColony:
     def __init__(self, adj_matrix, feature_matrix, num_communities, device='cuda', 
-                 aug_weight=0.5, top_k=50):  # <--- Top_K augmenté pour le Drug Repurposing
+                 aug_weight=0.5, top_k=50): 
         """
         FE-ACO ENGINE V2.0 (H100/Biomedical Edition)
         Optimisé pour les graphes massifs et l'intégration GNN.
@@ -17,12 +17,15 @@ class AugmentedQueenAntColony:
         if not adj_matrix.is_sparse:
             adj_matrix = adj_matrix.to_sparse()
         
+        # --- FIX STABILITÉ : Coalesce obligatoire sur GPU ---
+        adj_matrix = adj_matrix.coalesce()
+        
         # --- 1. GRAPH AUGMENTATION (MEMORY EFFICIENT) ---
         # Normalisation des features (Embeddings GNN)
         feat_norm = F.normalize(feature_matrix, p=2, dim=1)
         
         # Calcul de similarité par blocs (évite l'OOM sur H100)
-        # On récupère directement une matrice sparse
+        # On récupère directement une matrice sparse coalesced
         self.sparse_sim = self._compute_sparse_similarity(feat_norm, top_k=top_k)
         
         # --- 2. ATTENTION DYNAMIQUE (Sparse Friendly) ---
@@ -52,7 +55,7 @@ class AugmentedQueenAntColony:
         # Ajout des self-loops (Identité Sparse)
         indices_eye = torch.arange(self.num_nodes, device=device).repeat(2, 1)
         values_eye = torch.ones(self.num_nodes, device=device)
-        eye_sparse = torch.sparse_coo_tensor(indices_eye, values_eye, (self.num_nodes, self.num_nodes))
+        eye_sparse = torch.sparse_coo_tensor(indices_eye, values_eye, (self.num_nodes, self.num_nodes)).to(device)
         
         self.fused_adj = self.fused_adj + eye_sparse
         self.fused_adj = self.fused_adj.coalesce() # Optimisation mémoire
@@ -66,11 +69,12 @@ class AugmentedQueenAntColony:
         rows_fused = self.fused_adj.indices()[0]
         norm_values = self.fused_adj.values() * inv_deg[rows_fused]
         
+        # --- FIX CRITIQUE : .coalesce() final pour éviter le crash en step() ---
         self.norm_fused_adj = torch.sparse_coo_tensor(
             self.fused_adj.indices(), 
             norm_values, 
             self.fused_adj.size()
-        ).to(device)
+        ).to(device).coalesce()
             
         self._reset_queens()
 
@@ -109,9 +113,10 @@ class AugmentedQueenAntColony:
         all_indices = torch.cat(indices_list, dim=1)
         all_values = torch.cat(values_list)
         
+        # --- FIX CRITIQUE : .coalesce() ici aussi ---
         return torch.sparse_coo_tensor(
             all_indices, all_values, (num_nodes, num_nodes)
-        ).to(self.device)
+        ).to(self.device).coalesce()
 
     def _reset_queens(self):
         # Initialisation "One-Hot-Like" des Reines
