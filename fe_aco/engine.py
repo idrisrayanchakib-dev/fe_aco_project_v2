@@ -5,9 +5,11 @@ class AugmentedQueenAntColony:
     def __init__(self, adj_matrix, feature_matrix, num_communities, device='cuda', 
                  aug_weight=0.5, top_k=50): 
         """
-        FE-ACO ENGINE V2.0 (H100/Biomedical Edition)
-        Optimisé pour les graphes massifs et l'intégration GNN.
-        Gestion mémoire par 'Chunking' et opérations Sparse intégrales.
+        FE-ACO ENGINE V3.0 (H100/Biomedical Funnel Edition)
+        Optimized for:
+        1. Ranking precision (Soft Inflation)
+        2. Target-Centric convergence (Smart Queen Init)
+        3. Massive scale stability (Coalesced Sparse Tensors)
         """
         self.device = device
         self.k = num_communities
@@ -119,22 +121,47 @@ class AugmentedQueenAntColony:
         ).to(self.device).coalesce()
 
     def _reset_queens(self):
-        # Initialisation "One-Hot-Like" des Reines
+        # Initialisation "Smart-Seeding"
         self.global_pheromone = torch.ones(self.num_nodes, self.k, device=self.device) / self.k
-        perm = torch.randperm(self.num_nodes, device=self.device) # Optim GPU
-        queens = perm[:self.k]
+        
+        queens = torch.zeros(self.k, dtype=torch.long, device=self.device)
+        
+        # MODIFICATION V3: Reine 0 est TOUJOURS la Cible (Index 0)
+        # Cela force le cluster 0 à se construire autour de la cible
+        queens[0] = 0 
+        
+        # Les autres reines : MODIFICATION : Placement Stratégique
+        if self.k > 1:
+            # Calculer les degrés pour identifier les hubs
+            # On utilise self.fused_adj pour prendre en compte la sémantique
+            degrees = torch.sparse.sum(self.fused_adj, dim=1).to_dense()
+            
+            # On exclut le nœud 0 (la cible) des candidats pour les autres reines
+            degrees[0] = -1 # On met une valeur négative pour l'exclure du topk
+            
+            # Sélectionner les k-1 nœuds avec les plus hauts degrés (les hubs)
+            # On prend k-1 parce que la première reine est déjà placée
+            _, top_degree_indices = torch.topk(degrees, k=self.k - 1)
+            
+            queens[1:] = top_degree_indices
         
         # Reset précis
-        self.global_pheromone[queens, :] = 0.0
-        self.global_pheromone[queens, torch.arange(self.k, device=self.device)] = 1.0
+        for i, node_idx in enumerate(queens):
+            self.global_pheromone[node_idx, :] = 0.0
+            self.global_pheromone[node_idx, i] = 1.0
 
     def step(self, current_round=0, total_rounds=80):
         """
-        Propagation Vectorisée (Version Sparse-Only)
+        Propagation Vectorisée avec Inflation Douce (Soft Ranking)
         """
         progress = current_round / total_rounds
-        inflation = 1.2 + (pow(progress, 2) * 2.5)
-        evaporation = 0.1 + (progress * 0.8) 
+        
+        # MODIFICATION V3: Inflation plus douce (Max 2.0 au lieu de 3.7)
+        # Cela évite que tous les scores deviennent 1.0000 instantanément
+        inflation = 1.1 + (pow(progress, 2) * 0.9) 
+        
+        # MODIFICATION V3: Évaporation plus forte pour nettoyer le bruit
+        evaporation = 0.15 + (progress * 0.4) 
         
         # Propagation Sparse-Dense Multiplication (Optimisé CUDA)
         neighbor_influence = torch.sparse.mm(self.norm_fused_adj, self.global_pheromone)
